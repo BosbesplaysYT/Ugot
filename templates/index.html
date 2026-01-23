@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>UGOT Route Planner</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 12px; }
+  canvas { border: 1px solid #222; cursor: crosshair; display:block; }
+  #controls { margin-top: 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  button { padding: 6px 10px; font-size: 14px; }
+  #distanceInfo { margin-left: 8px; color: #333; }
+  .small { font-size: 13px; color: #555; }
+  #waypointList { margin-top: 8px; font-size: 13px; color:#333; }
+  #main-layout { 
+    display: flex; 
+    gap: 20px; 
+    justify-content: center; 
+    align-items: flex-start; 
+    margin-top: 20px;
+  }
+  .view-container { 
+    background: #f4f4f4; 
+    padding: 10px; 
+    border-radius: 8px; 
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  }
+  #cameraFeed { 
+    width: 400px; /* Adjust size as needed */
+    height: auto; 
+    border: 2px solid #333; 
+    display: block;
+    background: #000;
+  }
+</style>
+</head>
+<body>
+  <div id="container" style="display:flex; flex-direction:column; align-items:center;">
+    <h3>UGOT Route Planner</h3>
+    <div class="view-container">
+        <h4 style="margin:0 0 5px 0">Map View</h4>
+        <canvas id="mapCanvas" width="600" height="450"></canvas>
+    </div>
+
+    <div class="view-container">
+        <h4 style="margin:0 0 5px 0">Live Camera</h4>
+        <img id="cameraFeed" src="/video_feed" alt="Robot Camera Stream">
+    </div>
+    <div id="controls">
+      <button id="undoWp">Undo last</button>
+      <button id="clearWp">Clear</button>
+      <button id="sendRoute">Send Route to Robot</button>
+      <button id="vibe">Vibe</button>
+      <div id="distanceInfo" class="small"></div>
+      <div id="statusText" class="small" style="margin-left:auto;">status: <span id="statusVal">idle</span></div>
+    </div>
+    <div id="waypointList" class="small">Waypoints: <span id="wpCount">0</span></div>
+  </div>
+
+
+<script>
+(async function() {
+  const SCALE_CM_PER_PX = 0.5;
+  const canvas = document.getElementById('mapCanvas');
+  const ctx = canvas.getContext('2d');
+  const sendRouteBtn = document.getElementById('sendRoute');
+  const undoBtn = document.getElementById('undoWp');
+  const clearBtn = document.getElementById('clearWp');
+  const distanceInfo = document.getElementById('distanceInfo');
+  const statusVal = document.getElementById('statusVal');
+  const wpCount = document.getElementById('wpCount');
+  const vibeBtn = document.getElementById('vibe');
+
+  // Robot pose in pixels + degrees (flipped Y)
+  let robotPos = { x: canvas.width / 2, y: canvas.height / 2, angle: 0 };
+
+  // Waypoints: always start at canvas center
+  let waypoints = [{ x: robotPos.x, y: robotPos.y }];
+  updateWpCount();
+
+  // Track how many waypoints have already been sent to the robot.
+  // Initially only the start point exists, so lastSentCount = 1.
+  // When we send a full route we set lastSentCount = waypoints.length.
+  // When we send only a tail we set lastSentCount += tail.length.
+  let lastSentCount = 1;
+  let initialRouteSent = false;
+
+  // Add waypoint on click (cannot modify first/start waypoint)
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    waypoints.push({ x, y });
+    updateWpCount();
+    redraw();
+    updateDistanceInfo();
+  });
+
+  vibeBtn.addEventListener('click', (e) => {
+    fetch("/vibe");
+  });
+
+  // Undo last (cannot remove first/start waypoint)
+  undoBtn.addEventListener('click', () => {
+    if (waypoints.length <= 1) return; // first waypoint fixed
+    waypoints.pop();
+    updateWpCount();
+    redraw();
+    updateDistanceInfo();
+  });
+
+  // Clear all except first/start waypoint
+  clearBtn.addEventListener('click', () => {
+    waypoints = [{ x: robotPos.x, y: robotPos.y }];
+    updateWpCount();
+    redraw();
+    updateDistanceInfo();
+  });
+
+  // Send route (either full route first-time, or tail after paused/finished)
+  sendRouteBtn.addEventListener('click', async () => {
+    if (waypoints.length < 2) return alert('Please specify at least 2 waypoints.');
+
+    // convert all waypoints to backend pixel-space (flip Y)
+    const flippedAll = waypoints.map(p => ({ x: p.x, y: canvas.height - p.y }));
+
+    try {
+      if (!initialRouteSent) {
+        // First send: send entire route to /execute_strict (existing behavior)
+        const payload = { waypoints: flippedAll, scale_cm_per_px: SCALE_CM_PER_PX };
+        const resp = await fetch('/execute_strict', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) throw new Error('Server error');
+        initialRouteSent = true;
+        lastSentCount = waypoints.length;
+        statusVal.textContent = 'execution started';
+        await pollStatusUntilIdle();
+        alert('Route execution finished.');
+      } else {
+        // Subsequent sends: only send the tail since lastSentCount
+        if (lastSentCount >= waypoints.length) {
+          return alert('No new waypoints to send.');
+        }
+        const flippedTail = flippedAll.slice(lastSentCount); // send only newly added points
+        // POST to /execute_tail which will prepend the current robot pose as the start point
+        const payload = { waypoints: flippedTail, scale_cm_per_px: SCALE_CM_PER_PX };
+        const resp = await fetch('/execute_tail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error('Server error: ' + txt);
+        }
+        // update bookkeeping
+        lastSentCount = waypoints.length;
+        statusVal.textContent = 'tail execution started';
+        await pollStatusUntilIdle();
+        alert('Tail execution finished.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Failed to start execution: ' + err.message);
+    }
+  });
+
+  // Poll backend status
+  async function pollStatusUntilIdle(timeoutMs = 120000, interval = 500) {
+    const start = Date.now();
+    while (true) {
+      try {
+        const s = await fetch('/status');
+        if (!s.ok) throw new Error('status fetch failed');
+        const data = await s.json();
+        robotPos.x = (typeof data.x_cm === 'number') ? data.x_cm / SCALE_CM_PER_PX : robotPos.x;
+        robotPos.y = (typeof data.y_cm === 'number') ? canvas.height - (data.y_cm / SCALE_CM_PER_PX) : robotPos.y;
+        // backend heading is positive CCW in its frame but Y is inverted for canvas,
+        // so negate the angle when mapping to canvas coordinates.
+        robotPos.angle = (typeof data.heading_deg === 'number') ? -data.heading_deg : robotPos.angle;
+        statusVal.textContent = data.status_text ?? (data.executing ? 'executing' : 'idle');
+        redraw();
+
+        // If robot stopped due to obstacle, we leave initialRouteSent true so subsequent
+        // sends will be tail-only. lastSentCount already reflects what was sent.
+        if (!data.executing) return data;
+      } catch(err) {
+        console.warn('status poll error', err);
+      }
+      if (Date.now() - start > timeoutMs) { statusVal.textContent='timeout'; return; }
+      await sleep(interval);
+    }
+  }
+
+  function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+  // Draw waypoints + robot
+  function redraw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Waypoints & lines
+    if (waypoints.length > 0){
+      ctx.lineWidth=2; ctx.strokeStyle='#1e88e5';
+      ctx.beginPath();
+      ctx.moveTo(waypoints[0].x, waypoints[0].y);
+      for(let i=1;i<waypoints.length;i++){ ctx.lineTo(waypoints[i].x, waypoints[i].y); }
+      ctx.stroke();
+
+      for(let i=0;i<waypoints.length;i++){
+        const wp=waypoints[i];
+        ctx.fillStyle = (i===0)?'#2e7d32':'#1976d2';
+        ctx.beginPath(); ctx.arc(wp.x, wp.y, 5,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#fff'; ctx.font='10px sans-serif';
+        ctx.fillText(String(i), wp.x+6, wp.y-6);
+      }
+    }
+
+    // Robot
+    ctx.fillStyle='red'; ctx.beginPath(); ctx.arc(robotPos.x, robotPos.y,6,0,Math.PI*2); ctx.fill();
+    const rad=robotPos.angle*Math.PI/180;
+    ctx.strokeStyle='red'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(robotPos.x,robotPos.y);
+    ctx.lineTo(robotPos.x + 18*Math.cos(rad), robotPos.y + 18*Math.sin(rad));
+    ctx.stroke();
+  }
+
+  function updateDistanceInfo(){
+    if (waypoints.length < 2){ distanceInfo.textContent=''; return; }
+    const a = waypoints[waypoints.length-2];
+    const b = waypoints[waypoints.length-1];
+    const distCm = Math.hypot(b.x-a.x, b.y-a.y) * SCALE_CM_PER_PX;
+    distanceInfo.textContent = `Last segment: ${distCm.toFixed(1)} cm`;
+  }
+
+  function updateWpCount(){ wpCount.textContent = waypoints.length; }
+
+  redraw();
+})();
+</script>
+</body>
+</html>

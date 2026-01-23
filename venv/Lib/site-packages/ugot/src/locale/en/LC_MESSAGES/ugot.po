@@ -1,0 +1,135 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ugot V1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "red"
+msgstr "Red"
+
+msgid "orange"
+msgstr "Orange"
+
+msgid "yellow"
+msgstr "Yellow"
+
+msgid "green"
+msgstr "Green"
+
+msgid "blue"
+msgstr "Blue"
+
+msgid "purple"
+msgstr "Purple"
+
+msgid "ball"
+msgstr "Ball"
+
+msgid "square"
+msgstr "Cube"
+
+msgid "emotion.happy"
+msgstr "Happy"
+
+msgid "emotion.silence"
+msgstr "Calm"
+
+msgid "emotion.angry"
+msgstr "Angry"
+
+msgid "emotion.amaze"
+msgstr "Surprised"
+
+msgid "face.man"
+msgstr "Male"
+
+msgid "face.noMask"
+msgstr "No mask"
+
+msgid "face.notProperlyMask"
+msgstr "Mask not worn properly"
+
+msgid "face.wearMask"
+msgstr "Wearing masks"
+
+msgid "face.woman"
+msgstr "Female"
+
+msgid "licensePlate.blue"
+msgstr "Blue license plate"
+
+msgid "licensePlate.green"
+msgstr "Green license plate"
+
+msgid "gesture.cloth"
+msgstr "Cloth"
+
+msgid "gesture.ok"
+msgstr "OK"
+
+msgid "gesture.rock"
+msgstr "Stone"
+
+msgid "gesture.scissors"
+msgstr "Scissors"
+
+msgid "gesture.likes"
+msgstr "Likes"
+
+msgid "traffic.turnLeft"
+msgstr "Turn left"
+
+msgid "traffic.turnRight"
+msgstr "Turn right"
+
+msgid "traffic.noPark"
+msgstr "No long parking"
+
+msgid "traffic.whistle"
+msgstr "Whistle"
+
+msgid "traffic.tunnel"
+msgstr "Enter tunnel"
+
+msgid "traffic.children"
+msgstr "Take care of children"
+
+msgid "traffic.redLight"
+msgstr "Red light"
+
+msgid "traffic.greenLight"
+msgstr "Green light"
+
+msgid "traffic.amberLight"
+msgstr "Yellow light"
+
+msgid "traffic.zebraCrossing"
+msgstr "zebra crossing"
+
+msgid "face.stranger"
+msgstr "Stranger"
+
+msgid "aisound.behind"
+msgstr "Behind"
+
+msgid "aisound.front"
+msgstr "Front"
+
+msgid "aisound.left"
+msgstr "Left"
+
+msgid "aisound.right"
+msgstr "Right"
+
+msgid "toy.youyou"
+msgstr "youyou"
+
+msgid "toy.walkerx"
+msgstr "walkerx"
+
+msgid "toy.walker"
+msgstr "walker"

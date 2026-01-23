@@ -1,0 +1,48 @@
+Metadata-Version: 2.1
+Name: ugot
+Version: 0.2.13
+Summary: ugot-Python SDK
+Author-email: Jesse <jesse.huang@ubtrobot.com>
+Platform: any
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.7
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: setuptools >=61.0
+Requires-Dist: concurrent-log-handler
+Requires-Dist: grpcio
+Requires-Dist: protobuf
+Requires-Dist: grpcio-tools
+Requires-Dist: wheel
+Requires-Dist: zeroconf
+Requires-Dist: pillow
+Requires-Dist: requests
+
+# ugot
+A JupyterLab extension for ugot
+
+## Requirements
+
+* jupyterlab >= 3.0
+* concurrent-log-handler
+* grpcio
+* protobuf
+* grpcio-tools
+* wheel
+* zeroconf
+
+## Install
+
+```bash
+pip install ugot
+```
+
+## Uninstall
+
+```bash
+pip uninstall ugot
+```
+
+

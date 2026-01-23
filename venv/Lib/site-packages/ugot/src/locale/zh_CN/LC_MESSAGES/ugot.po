@@ -1,0 +1,135 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ugot V1.0.0\n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "red"
+msgstr "红色"
+
+msgid "orange"
+msgstr "橙色"
+
+msgid "yellow"
+msgstr "黄色"
+
+msgid "green"
+msgstr "绿色"
+
+msgid "blue"
+msgstr "蓝色"
+
+msgid "purple"
+msgstr "紫色"
+
+msgid "ball"
+msgstr "小球"
+
+msgid "square"
+msgstr "方块"
+
+msgid "emotion.happy"
+msgstr "开心"
+
+msgid "emotion.silence"
+msgstr "平静"
+
+msgid "emotion.angry"
+msgstr "生气"
+
+msgid "emotion.amaze"
+msgstr "惊讶"
+
+msgid "face.man"
+msgstr "男性"
+
+msgid "face.noMask"
+msgstr "未佩戴口罩"
+
+msgid "face.notProperlyMask"
+msgstr "未佩戴好口罩"
+
+msgid "face.wearMask"
+msgstr "佩戴口罩"
+
+msgid "face.woman"
+msgstr "女性"
+
+msgid "licensePlate.blue"
+msgstr "蓝牌"
+
+msgid "licensePlate.green"
+msgstr "绿牌"
+
+msgid "gesture.cloth"
+msgstr "布"
+
+msgid "gesture.ok"
+msgstr "OK"
+
+msgid "gesture.rock"
+msgstr "石头"
+
+msgid "gesture.scissors"
+msgstr "剪刀"
+
+msgid "gesture.likes"
+msgstr "点赞"
+
+msgid "traffic.turnLeft"
+msgstr "左转"
+
+msgid "traffic.turnRight"
+msgstr "右转"
+
+msgid "traffic.noPark"
+msgstr "禁止长时间停车"
+
+msgid "traffic.whistle"
+msgstr "鸣笛"
+
+msgid "traffic.tunnel"
+msgstr "进入隧道"
+
+msgid "traffic.children"
+msgstr "注意儿童"
+
+msgid "traffic.redLight"
+msgstr "红灯"
+
+msgid "traffic.greenLight"
+msgstr "绿灯"
+
+msgid "traffic.amberLight"
+msgstr "黄灯"
+
+msgid "traffic.zebraCrossing"
+msgstr "斑马线"
+
+msgid "face.stranger"
+msgstr "陌生人"
+
+msgid "aisound.behind"
+msgstr "后方"
+
+msgid "aisound.front"
+msgstr "前方"
+
+msgid "aisound.left"
+msgstr "左方"
+
+msgid "aisound.right"
+msgstr "右方"
+
+msgid "toy.youyou"
+msgstr "优悠"
+
+msgid "toy.walkerx"
+msgstr "walkerx"
+
+msgid "toy.walker"
+msgstr "walker"
