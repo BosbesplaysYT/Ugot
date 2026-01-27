@@ -1,4 +1,4 @@
-# app.py
+# (Full updated app.py — replace your file with this)
 from flask import Flask, request, jsonify, render_template, Response
 import math
 import threading
@@ -44,7 +44,8 @@ robot_state = {
     "heading_deg": 0.0,    # 0 degrees points to +X (canvas right); degrees increase CCW
     "executing": False,
     "status_text": "idle",
-    "last_stop": None      # details of last obstacle stop
+    "last_stop": None,     # details of last obstacle stop
+    "obstacles": []        # persistent list of detected obstacles (kept until /reset)
 }
 
 # Helper: normalize degrees to [-180,180)
@@ -61,7 +62,7 @@ def gen_frames():
                 # Convert bytes to numpy array and decode to image
                 nparr = np.frombuffer(frame_data, np.uint8)
                 img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-                
+
                 # Optional: Resize image to reduce bandwidth/latency
                 # img = cv2.resize(img, (480, 320))
 
@@ -98,6 +99,7 @@ def safe_turn(direction, speed, degrees):
         except Exception as e2:
             print("turn fallback failed:", e2)
 
+
 def safe_move(direction, speed, cm):
     """
     Use transform_move_speed_times with unit=1 (centimeters).
@@ -116,6 +118,7 @@ def safe_move(direction, speed, cm):
         except Exception as e2:
             print("move fallback failed:", e2)
 
+
 def read_distance():
     try:
         d = robot.read_distance_data(SENSOR_ID)
@@ -126,9 +129,11 @@ def read_distance():
         print("distance read error:", e)
         return -1
 
+
 def play_tts(text, voice_type=0, wait=False):
     try:
-        robot.play_audio_tts(text, voice_type=voice_type, wait=wait)
+        #robot.play_audio_tts(text, voice_type=voice_type, wait=wait)
+        pass
     except Exception as e:
         print("tts error:", e)
 
@@ -178,13 +183,113 @@ def execute_route_thread(waypoints_px, scale_cm_per_px):
             current_heading = robot_state["heading_deg"]
             robot_state["status_text"] = "executing"
 
-        # For each segment, turn toward target, then move forward in integer-cm chunks
-        for idx in range(1, len(points_cm)):
-            # compute vector in cm
+        # Helper inside thread: attempt avoidance and map width
+        def attempt_avoidance_and_map(current_x, current_y, current_heading, scale, from_idx, to_idx):
+            """
+            Try to find a side (left/right) with clearance and insert detour waypoints into points_cm.
+            Returns True if avoidance inserted and we should continue, False to abort route and keep last_stop.
+            """
+            try:
+                # Small scan parameters
+                scan_angles = [15, 30, 45]
+                max_scan = 60
+                clearance_values = {"left": 0, "right": 0}
+
+                # Try scanning left and right (rotate a bit, measure distance, rotate back)
+                for side in ("left", "right"):
+                    best = -1
+                    for a in scan_angles:
+                        ang = a if side == "left" else -a
+                        try:
+                            # rotate there
+                            safe_turn(2 if ang > 0 else 3, TURN_SPEED_DEG_S, int(abs(ang) * CORRECTION))
+                            time.sleep(0.08)
+                            d = read_distance()
+                            # rotate back
+                            safe_turn(3 if ang > 0 else 2, TURN_SPEED_DEG_S, int(abs(ang) * CORRECTION))
+                        except Exception:
+                            d = read_distance()
+                        if d and d > best:
+                            best = d
+                    clearance_values[side] = best if best > 0 else -1
+
+                # pick side with larger clearance
+                left_clear = clearance_values['left']
+                right_clear = clearance_values['right']
+                chosen_side = None
+                if left_clear > right_clear and left_clear > STOP_DISTANCE_CM + 10:
+                    chosen_side = 'left'
+                elif right_clear > left_clear and right_clear > STOP_DISTANCE_CM + 10:
+                    chosen_side = 'right'
+
+                if not chosen_side:
+                    # no clear side large enough
+                    return False, None
+
+                # compute lateral offset (how far to pass the obstacle)
+                lateral_offset = max(40, STOP_DISTANCE_CM + 25)  # cm (conservative)
+
+                # compute unit perpendicular vector
+                perp_angle_deg = current_heading + (90 if chosen_side == 'left' else -90)
+                perp_rad = math.radians(perp_angle_deg)
+                perp_dx = math.cos(perp_rad)
+                perp_dy = math.sin(perp_rad)
+
+                # create two detour points in cm (relative to current pose)
+                # 1) step out laterally + short forward
+                forward_short = 30
+                forward_far = 80
+
+                wp1 = {
+                    'x': current_x + perp_dx * lateral_offset + math.cos(math.radians(current_heading)) * forward_short,
+                    'y': current_y + perp_dy * lateral_offset + math.sin(math.radians(current_heading)) * forward_short
+                }
+
+                # 2) a further point ahead that should rejoin past the obstacle
+                wp2 = {
+                    'x': current_x + perp_dx * lateral_offset + math.cos(math.radians(current_heading)) * forward_far,
+                    'y': current_y + perp_dy * lateral_offset + math.sin(math.radians(current_heading)) * forward_far
+                }
+
+                # insert these in cm-space before the current to_idx target
+                insert_idx = to_idx
+                points_cm.insert(insert_idx, wp2)
+                points_cm.insert(insert_idx, wp1)
+
+                # estimate obstacle width conservatively: 2 * lateral_offset
+                width_cm = 2 * lateral_offset
+
+                obs = {
+                    'timestamp': time.time(),
+                    'reason': 'mapped_via_avoidance',
+                    'center_x_cm': current_x,
+                    'center_y_cm': current_y,
+                    'x_cm': current_x,
+                    'y_cm': current_y,
+                    'x_px': current_x / scale,
+                    'y_px': current_y / scale,
+                    'width_cm': width_cm,
+                    'side_chosen': chosen_side,
+                    'stop_segment_from_idx': from_idx,
+                    'stop_segment_to_idx': to_idx
+                }
+
+                with robot_state_lock:
+                    robot_state['obstacles'].append(obs)
+
+                return True, obs
+
+            except Exception as e:
+                print('avoidance error', e)
+                return False, None
+
+        # iterate segments using an index so we can modify points_cm on the fly
+        idx = 1
+        while idx < len(points_cm):
             with robot_state_lock:
-                rx = robot_state["x_cm"]
-                ry = robot_state["y_cm"]
-                current_heading = robot_state["heading_deg"]
+                rx = robot_state['x_cm']
+                ry = robot_state['y_cm']
+                current_heading = robot_state['heading_deg']
 
             tx = points_cm[idx]['x']
             ty = points_cm[idx]['y']
@@ -192,103 +297,125 @@ def execute_route_thread(waypoints_px, scale_cm_per_px):
             dy = ty - ry
             segment_dist = math.hypot(dx, dy)
             if segment_dist < 0.5:
-                # negligible
+                idx += 1
                 continue
 
-            # target heading (degrees, atan2 uses y then x; note canvas y downwards consistent)
+            # target heading (degrees)
             target_heading = math.degrees(math.atan2(dy, dx))
-            # compute minimal delta
             delta = normalize_deg(target_heading - current_heading)
 
-            # turn: choose direction 2=Left (positive delta), 3=Right (negative delta)
+            # turn
             if abs(delta) >= 1.0:
                 if delta > 0:
                     turn_dir = 2
-                    degs = int(round(delta))
                 else:
                     turn_dir = 3
-                    degs = int(round(-delta))
-                # clamp degs to [1,360]
-                # corrected motor command for real robot
                 degs_motor = max(1, min(360, int(round(abs(delta) * CORRECTION))))
                 safe_turn(turn_dir, TURN_SPEED_DEG_S, degs_motor)
-                # update heading
                 with robot_state_lock:
-                    robot_state["heading_deg"] = normalize_deg(current_heading + delta)
-                    current_heading = robot_state["heading_deg"]
-                    robot_state["status_text"] = f"turned {delta:.1f} degrees"
+                    robot_state['heading_deg'] = normalize_deg(current_heading + delta)
+                    current_heading = robot_state['heading_deg']
+                    robot_state['status_text'] = f"turned {delta:.1f} degrees"
 
-            # now move forward along heading by segment_dist, but chunk into integer cm pieces
+            # move forward in chunks
             remaining = float(segment_dist)
+            stopped = False
             while remaining > 0.49:
                 chunk = min(MAX_MOVE_CHUNK_CM, remaining)
                 chunk_int = int(round(chunk))
                 if chunk_int <= 0:
-                    # safety
                     break
-                # Before moving, check distance sensor
+
                 dist_read = read_distance()
                 if dist_read >= 0 and dist_read <= STOP_DISTANCE_CM:
-                    # obstacle already very close; do not move
+                    # obstacle detected before moving — attempt avoidance
                     with robot_state_lock:
-                        robot_state["status_text"] = f"stopped (obstacle {dist_read} cm)"
-                        robot_state["last_stop"] = {
-                            "reason": "obstacle_before_move",
-                            "distance_cm": dist_read,
-                            "x_cm": robot_state["x_cm"],
-                            "y_cm": robot_state["y_cm"]
-                        }
-                        robot_state["executing"] = False
-                    play_tts(f"Ik heb een obstakel {dist_read} centimeter voor mij gedetecteerd! Ik doe niet meer mee.", wait=False)
-                    robot.transform_set_chassis_height(2)
-                    robot.screen_print_text_newline("Obstakel!", 3)
-                    return
+                        robot_state['status_text'] = f"detected obstacle before move ({dist_read} cm)"
 
-                # move chunk_int centimeters forward (direction 0)
+                    succeeded, obs = attempt_avoidance_and_map(rx, ry, current_heading, scale_cm_per_px, max(0, idx - 1), idx)
+                    if succeeded:
+                        # continue main loop; do NOT increment idx — new waypoints inserted at idx
+                        stopped = False
+                        break
+                    else:
+                        # record last_stop and stop execution
+                        with robot_state_lock:
+                            robot_state['last_stop'] = {
+                                'reason': 'obstacle_before_move',
+                                'distance_cm': dist_read,
+                                'x_cm': robot_state['x_cm'],
+                                'y_cm': robot_state['y_cm'],
+                                'x_px': robot_state['x_cm'] / scale_cm_per_px,
+                                'y_px': robot_state['y_cm'] / scale_cm_per_px,
+                                'stop_segment_from_idx': max(0, idx - 1),
+                                'stop_segment_to_idx': idx
+                            }
+                            robot_state['executing'] = False
+                        play_tts(f"Ik heb een obstakel {dist_read} centimeter voor mij gedetecteerd! Ik doe niet meer mee.", wait=False)
+                        robot.transform_set_chassis_height(2)
+                        robot.screen_print_text_newline("Obstakel!", 3)
+                        return
+
+                # perform movement
                 safe_move(0, FORWARD_SPEED_CM_S, chunk_int)
 
-                # update virtual pose based on actual executed chunk
-                # heading in degrees: 0 => +X, angle increases CCW (atan2 consistent)
+                # update pose
                 rad = math.radians(current_heading)
                 dx_ex = chunk_int * math.cos(rad)
                 dy_ex = chunk_int * math.sin(rad)
                 with robot_state_lock:
-                    robot_state["x_cm"] += dx_ex
-                    robot_state["y_cm"] += dy_ex
-                    robot_state["status_text"] = f"moved {chunk_int} cm"
-                # after motion, check sensor
+                    robot_state['x_cm'] += dx_ex
+                    robot_state['y_cm'] += dy_ex
+                    robot_state['status_text'] = f"moved {chunk_int} cm"
+
+                # sensor after motion
                 dist_read = read_distance()
                 if dist_read >= 0 and dist_read <= STOP_DISTANCE_CM:
-                    # obstacle detected, stop route
-                    # call transform_stop as a precaution
+                    # obstacle during move — try avoidance
                     try:
                         robot.transform_stop()
                     except Exception:
                         pass
+
                     with robot_state_lock:
-                        robot_state["status_text"] = f"stopped (obstacle {dist_read} cm)"
-                        robot_state["last_stop"] = {
-                            "reason": "obstacle_during_move",
-                            "distance_cm": dist_read,
-                            "x_cm": robot_state["x_cm"],
-                            "y_cm": robot_state["y_cm"]
-                        }
-                        robot_state["executing"] = False
-                    play_tts(f"Ik heb een obstakel {dist_read} centimeter voor mij gedetecteerd! Ik doe niet meer mee.", wait=False)
-                    robot.transform_set_chassis_height(2)
-                    robot.screen_print_text_newline("Obstakel!", 3)
-                    return
+                        rx = robot_state['x_cm']
+                        ry = robot_state['y_cm']
+
+                    succeeded, obs = attempt_avoidance_and_map(rx, ry, current_heading, scale_cm_per_px, max(0, idx - 1), idx)
+                    if succeeded:
+                        # continue with newly inserted waypoints
+                        stopped = False
+                        break
+                    else:
+                        with robot_state_lock:
+                            robot_state['status_text'] = f"stopped (obstacle {dist_read} cm)"
+                            robot_state['last_stop'] = {
+                                'reason': 'obstacle_during_move',
+                                'distance_cm': dist_read,
+                                'x_cm': robot_state['x_cm'],
+                                'y_cm': robot_state['y_cm'],
+                                'x_px': robot_state['x_cm'] / scale_cm_per_px,
+                                'y_px': robot_state['y_cm'] / scale_cm_per_px,
+                                'stop_segment_from_idx': max(0, idx - 1),
+                                'stop_segment_to_idx': idx
+                            }
+                            robot_state['executing'] = False
+                        play_tts(f"Ik heb een obstakel {dist_read} centimeter voor mij gedetecteerd! Ik doe niet meer mee.", wait=False)
+                        robot.transform_set_chassis_height(2)
+                        robot.screen_print_text_newline("Obstakel!", 3)
+                        return
 
                 remaining -= chunk_int
-                # small pause to let sensors settle
+                # small pause
                 time.sleep(0.06)
 
-            # segment complete, continue to next segment
+            # proceed to next segment
+            idx += 1
 
         # finished entire route
         with robot_state_lock:
-            robot_state["status_text"] = "route complete"
-            robot_state["executing"] = False
+            robot_state['status_text'] = "route complete"
+            robot_state['executing'] = False
         play_tts("Ik heb de route uitgevoerd", wait=False)
         robot.transform_set_chassis_height(2)
         robot.screen_print_text_newline("Ik heb de route uitgevoerd", 6)
@@ -317,28 +444,6 @@ def execute_strict():
     thread = threading.Thread(target=execute_route_thread, args=(waypoints, scale), daemon=True)
     thread.start()
     return jsonify({"ok": True, "message": "Execution started"})
-
-@app.route('/vibe', methods=["GET"])
-def vibe():
-    robot.transform_set_chassis_height(2)
-    time.sleep(0.2)
-    robot.transform_set_chassis_height(7)
-    time.sleep(0.2)
-    robot.transform_set_chassis_height(2)
-    time.sleep(0.2)
-    robot.transform_set_chassis_height(7)
-    time.sleep(0.2)
-    robot.transform_set_chassis_height(2)
-    time.sleep(0.2)
-    robot.transform_arm_control(1, 90, 150)
-    robot.transform_arm_control(3, 90, 150)
-    time.sleep(0.2)
-    robot.transform_restory()
-    robot.transform_arm_control(2, 90, 150)
-    robot.transform_arm_control(4, 90, 150)
-    time.sleep(0.2)
-    robot.transform_restory()
-    return jsonify({"ok": True, "message": "Vibing!"})
 
 @app.route('/execute_tail', methods=['POST'])
 def execute_tail():
@@ -374,16 +479,80 @@ def execute_tail():
     return jsonify({"ok": True, "message": "Tail execution started"})
 
 
+# ---------------- New: reset endpoint ----------------
+def _reset_robot_hardware_safely():
+    """
+    Best-effort attempts to stop/reset robot hardware state without throwing.
+    Keep it non-fatal so the endpoint always returns successfully even if hardware isn't available.
+    """
+    try:
+        # stop any active motion
+        try:
+            robot.transform_stop()
+        except Exception:
+            pass
+
+        # return arms/chassis to safe defaults where available
+        try:
+            robot.transform_set_chassis_height(2)
+        except Exception:
+            pass
+
+        try:
+            robot.transform_restory()
+        except Exception:
+            pass
+    except Exception as e:
+        # swallow exceptions but log
+        print("Error during hardware reset (ignored):", e)
+
+
+@app.route('/reset', methods=['POST', 'GET'])
+def reset():
+    """
+    Reset in-memory robot state to safe defaults and attempt a best-effort hardware reset.
+    Frontend can call this when clearing or reloading to avoid inconsistent memory.
+    """
+    # Best-effort hardware stop/reset
+    _reset_robot_hardware_safely()
+
+    # Reset shared robot_state under lock
+    with robot_state_lock:
+        robot_state["x_cm"] = 0.0
+        robot_state["y_cm"] = 0.0
+        robot_state["heading_deg"] = 0.0
+        robot_state["executing"] = False
+        robot_state["status_text"] = "idle"
+        robot_state["last_stop"] = None
+        robot_state["obstacles"] = []  # clear persisted obstacle memory
+
+    return jsonify({
+        "ok": True,
+        "message": "robot memory and status reset to defaults",
+        "state": {
+            "x_cm": robot_state["x_cm"],
+            "y_cm": robot_state["y_cm"],
+            "heading_deg": robot_state["heading_deg"],
+            "executing": robot_state["executing"],
+            "status_text": robot_state["status_text"],
+            "last_stop": robot_state["last_stop"],
+            "obstacles": robot_state["obstacles"]
+        }
+    })
+
+
 @app.route('/status', methods=['GET'])
 def status():
     with robot_state_lock:
+        # Return obstacles as list (already in px and cm)
         return jsonify({
             "x_cm": robot_state["x_cm"],
             "y_cm": robot_state["y_cm"],
             "heading_deg": robot_state["heading_deg"],
             "executing": robot_state["executing"],
             "status_text": robot_state["status_text"],
-            "last_stop": robot_state["last_stop"]
+            "last_stop": robot_state["last_stop"],
+            "obstacles": robot_state["obstacles"]
         })
 
 if __name__ == '__main__':

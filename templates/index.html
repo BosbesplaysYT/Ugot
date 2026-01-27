@@ -1,55 +1,93 @@
+<!-- Replace your existing HTML/JS with this file or merge the <script> portion below -->
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8" />
-<title>UGOT Route Planner</title>
-<style>
-  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; padding: 12px; }
-  canvas { border: 1px solid #222; cursor: crosshair; display:block; }
-  #controls { margin-top: 10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  button { padding: 6px 10px; font-size: 14px; }
-  #distanceInfo { margin-left: 8px; color: #333; }
-  .small { font-size: 13px; color: #555; }
-  #waypointList { margin-top: 8px; font-size: 13px; color:#333; }
-  #main-layout { 
-    display: flex; 
-    gap: 20px; 
-    justify-content: center; 
-    align-items: flex-start; 
-    margin-top: 20px;
-  }
-  .view-container { 
-    background: #f4f4f4; 
-    padding: 10px; 
-    border-radius: 8px; 
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-  }
-  #cameraFeed { 
-    width: 400px; /* Adjust size as needed */
-    height: auto; 
-    border: 2px solid #333; 
-    display: block;
-    background: #000;
-  }
-</style>
+  <meta charset="utf-8" />
+  <title>UGOT Route Planner</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      padding: 12px;
+    }
+
+    canvas {
+      border: 1px solid #222;
+      cursor: crosshair;
+      display: block;
+    }
+
+    #controls {
+      margin-top: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 6px 10px;
+      font-size: 14px;
+    }
+
+    #distanceInfo {
+      margin-left: 8px;
+      color: #333;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #555;
+    }
+
+    #waypointList {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #333;
+    }
+
+    #main-layout {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      align-items: flex-start;
+      margin-top: 20px;
+    }
+
+    .view-container {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+
+    #cameraFeed {
+      width: 400px;
+      /* Adjust size as needed */
+      height: auto;
+      border: 2px solid #333;
+      display: block;
+      background: #000;
+    }
+  </style>
 </head>
+
 <body>
   <div id="container" style="display:flex; flex-direction:column; align-items:center;">
     <h3>UGOT Route Planner</h3>
     <div class="view-container">
-        <h4 style="margin:0 0 5px 0">Map View</h4>
-        <canvas id="mapCanvas" width="600" height="450"></canvas>
+      <h4 style="margin:0 0 5px 0">Map View</h4>
+      <canvas id="mapCanvas" width="600" height="450"></canvas>
     </div>
 
     <div class="view-container">
-        <h4 style="margin:0 0 5px 0">Live Camera</h4>
-        <img id="cameraFeed" src="/video_feed" alt="Robot Camera Stream">
+      <h4 style="margin:0 0 5px 0">Live Camera</h4>
+      <img id="cameraFeed" src="/video_feed" alt="Robot Camera Stream">
     </div>
     <div id="controls">
       <button id="undoWp">Undo last</button>
       <button id="clearWp">Clear</button>
       <button id="sendRoute">Send Route to Robot</button>
-      <button id="vibe">Vibe</button>
       <div id="distanceInfo" class="small"></div>
       <div id="statusText" class="small" style="margin-left:auto;">status: <span id="statusVal">idle</span></div>
     </div>
@@ -57,187 +95,454 @@
   </div>
 
 
-<script>
-(async function() {
-  const SCALE_CM_PER_PX = 0.5;
-  const canvas = document.getElementById('mapCanvas');
-  const ctx = canvas.getContext('2d');
-  const sendRouteBtn = document.getElementById('sendRoute');
-  const undoBtn = document.getElementById('undoWp');
-  const clearBtn = document.getElementById('clearWp');
-  const distanceInfo = document.getElementById('distanceInfo');
-  const statusVal = document.getElementById('statusVal');
-  const wpCount = document.getElementById('wpCount');
-  const vibeBtn = document.getElementById('vibe');
+  <script>
+    (async function () {
+      const SCALE_CM_PER_PX = 0.5;
 
-  // Robot pose in pixels + degrees (flipped Y)
-  let robotPos = { x: canvas.width / 2, y: canvas.height / 2, angle: 0 };
+      // track last stop we reacted to so we don't repeatedly re-truncate
+      let lastStopHandledSignature = null;
 
-  // Waypoints: always start at canvas center
-  let waypoints = [{ x: robotPos.x, y: robotPos.y }];
-  updateWpCount();
+      const canvas = document.getElementById('mapCanvas');
+      const ctx = canvas.getContext('2d');
 
-  // Track how many waypoints have already been sent to the robot.
-  // Initially only the start point exists, so lastSentCount = 1.
-  // When we send a full route we set lastSentCount = waypoints.length.
-  // When we send only a tail we set lastSentCount += tail.length.
-  let lastSentCount = 1;
-  let initialRouteSent = false;
+      const sendRouteBtn = document.getElementById('sendRoute');
+      const undoBtn = document.getElementById('undoWp');
+      const clearBtn = document.getElementById('clearWp');
+      const distanceInfo = document.getElementById('distanceInfo');
+      const statusVal = document.getElementById('statusVal');
+      const wpCount = document.getElementById('wpCount');
 
-  // Add waypoint on click (cannot modify first/start waypoint)
-  canvas.addEventListener('click', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    waypoints.push({ x, y });
-    updateWpCount();
-    redraw();
-    updateDistanceInfo();
-  });
+      // ================= VIEW STATE =================
+      let viewOrigin = { x: 0, y: 0 };   // world px (bottom-left)
+      let viewScale = 1.0;
 
-  vibeBtn.addEventListener('click', (e) => {
-    fetch("/vibe");
-  });
+      // ================= ROBOT STATE =================
+      let robotWorld = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        angle: 0
+      };
 
-  // Undo last (cannot remove first/start waypoint)
-  undoBtn.addEventListener('click', () => {
-    if (waypoints.length <= 1) return; // first waypoint fixed
-    waypoints.pop();
-    updateWpCount();
-    redraw();
-    updateDistanceInfo();
-  });
+      // ================= WAYPOINTS =================
+      let waypoints = [
+        { x: robotWorld.x, y: robotWorld.y }
+      ];
 
-  // Clear all except first/start waypoint
-  clearBtn.addEventListener('click', () => {
-    waypoints = [{ x: robotPos.x, y: robotPos.y }];
-    updateWpCount();
-    redraw();
-    updateDistanceInfo();
-  });
+      // persistent obstacles from backend (each obstacle has x_px,y_px,x_cm,y_cm,...)
+      let obstacles = [];
 
-  // Send route (either full route first-time, or tail after paused/finished)
-  sendRouteBtn.addEventListener('click', async () => {
-    if (waypoints.length < 2) return alert('Please specify at least 2 waypoints.');
+      let lastSentCount = 1;
+      let initialRouteSent = false;
 
-    // convert all waypoints to backend pixel-space (flip Y)
-    const flippedAll = waypoints.map(p => ({ x: p.x, y: canvas.height - p.y }));
+      updateWpCount();
 
-    try {
-      if (!initialRouteSent) {
-        // First send: send entire route to /execute_strict (existing behavior)
-        const payload = { waypoints: flippedAll, scale_cm_per_px: SCALE_CM_PER_PX };
-        const resp = await fetch('/execute_strict', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (!resp.ok) throw new Error('Server error');
-        initialRouteSent = true;
-        lastSentCount = waypoints.length;
-        statusVal.textContent = 'execution started';
-        await pollStatusUntilIdle();
-        alert('Route execution finished.');
-      } else {
-        // Subsequent sends: only send the tail since lastSentCount
-        if (lastSentCount >= waypoints.length) {
-          return alert('No new waypoints to send.');
+      async function resetBackend() {
+        try {
+          await fetch('/reset', { method: 'POST' });
+        } catch (e) {
+          console.warn('Backend reset failed:', e);
         }
-        const flippedTail = flippedAll.slice(lastSentCount); // send only newly added points
-        // POST to /execute_tail which will prepend the current robot pose as the start point
-        const payload = { waypoints: flippedTail, scale_cm_per_px: SCALE_CM_PER_PX };
-        const resp = await fetch('/execute_tail', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (!resp.ok) {
-          const txt = await resp.text();
-          throw new Error('Server error: ' + txt);
-        }
-        // update bookkeeping
-        lastSentCount = waypoints.length;
-        statusVal.textContent = 'tail execution started';
-        await pollStatusUntilIdle();
-        alert('Tail execution finished.');
       }
-    } catch (err) {
-      console.error(err);
-      alert('Failed to start execution: ' + err.message);
-    }
-  });
 
-  // Poll backend status
-  async function pollStatusUntilIdle(timeoutMs = 120000, interval = 500) {
-    const start = Date.now();
-    while (true) {
-      try {
-        const s = await fetch('/status');
-        if (!s.ok) throw new Error('status fetch failed');
-        const data = await s.json();
-        robotPos.x = (typeof data.x_cm === 'number') ? data.x_cm / SCALE_CM_PER_PX : robotPos.x;
-        robotPos.y = (typeof data.y_cm === 'number') ? canvas.height - (data.y_cm / SCALE_CM_PER_PX) : robotPos.y;
-        // backend heading is positive CCW in its frame but Y is inverted for canvas,
-        // so negate the angle when mapping to canvas coordinates.
-        robotPos.angle = (typeof data.heading_deg === 'number') ? -data.heading_deg : robotPos.angle;
-        statusVal.textContent = data.status_text ?? (data.executing ? 'executing' : 'idle');
+      // ================= INPUT STATE =================
+      let spaceDown = false;
+      let isPanning = false;
+      let panStart = null;
+      let originStart = null;
+
+      // ================= COORD TRANSFORMS =================
+      function screenToWorld(sx, sy) {
+        return {
+          x: viewOrigin.x + sx / viewScale,
+          y: viewOrigin.y + (canvas.height - sy) / viewScale
+        };
+      }
+
+      function worldToScreen(wx, wy) {
+        return {
+          x: (wx - viewOrigin.x) * viewScale,
+          y: canvas.height - (wy - viewOrigin.y) * viewScale
+        };
+      }
+
+      // format distance for display: cm under 100, otherwise meters
+      function formatDistanceLabel(cm) {
+        if (cm > 100) {
+          const m = cm / 100;
+          // show 1 decimal for meters if <10m, otherwise no decimals for cleanliness
+          const text = (m < 10) ? `${m.toFixed(1)} m` : `${m.toFixed(0)} m`;
+          return text;
+        } else {
+          // show 1 decimal for cm
+          return `${cm.toFixed(1)} cm`;
+        }
+      }
+
+      // ================= KEYBOARD =================
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          spaceDown = true;
+          canvas.style.cursor = 'grab';
+          e.preventDefault();
+        }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space') {
+          spaceDown = false;
+          canvas.style.cursor = 'crosshair';
+        }
+      });
+
+      // ================= MOUSE =================
+      canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+
+        // PAN
+        if (spaceDown || e.button === 1) {
+          isPanning = true;
+          panStart = { x: e.clientX, y: e.clientY };
+          originStart = { x: viewOrigin.x, y: viewOrigin.y };
+          canvas.style.cursor = 'grabbing';
+          e.preventDefault();
+          return;
+        }
+
+        // ADD WAYPOINT
+        if (e.button === 0) {
+          const w = screenToWorld(sx, sy);
+          waypoints.push({ x: w.x, y: w.y });
+          updateWpCount();
+          redraw();
+          updateDistanceInfo();
+        }
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isPanning) return;
+
+        const dx = e.clientX - panStart.x;
+        const dy = e.clientY - panStart.y;
+
+        viewOrigin.x = originStart.x - dx / viewScale;
+        viewOrigin.y = originStart.y + dy / viewScale;
+
         redraw();
+      });
 
-        // If robot stopped due to obstacle, we leave initialRouteSent true so subsequent
-        // sends will be tail-only. lastSentCount already reflects what was sent.
-        if (!data.executing) return data;
-      } catch(err) {
-        console.warn('status poll error', err);
+      window.addEventListener('mouseup', () => {
+        if (!isPanning) return;
+        isPanning = false;
+        canvas.style.cursor = spaceDown ? 'grab' : 'crosshair';
+      });
+
+      // ================= ZOOM =================
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        const rect = canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+
+        const before = screenToWorld(sx, sy);
+
+        const factor = Math.exp(-e.deltaY * 0.0015);
+        viewScale = Math.min(8, Math.max(0.1, viewScale * factor));
+
+        viewOrigin.x = before.x - sx / viewScale;
+        viewOrigin.y = before.y - (canvas.height - sy) / viewScale;
+
+        redraw();
+      }, { passive: false });
+
+      // ================= GRID =================
+      function drawGrid() {
+        const minorCm = 10;
+        const majorCm = 50;
+
+        const minorPx = minorCm / SCALE_CM_PER_PX;
+        const majorPx = majorCm / SCALE_CM_PER_PX;
+
+        const topLeft = screenToWorld(0, 0);
+        const bottomRight = screenToWorld(canvas.width, canvas.height);
+
+        const startX = Math.floor(topLeft.x / minorPx) * minorPx;
+        const endX = Math.ceil(bottomRight.x / minorPx) * minorPx;
+        const startY = Math.floor(bottomRight.y / minorPx) * minorPx;
+        const endY = Math.ceil(topLeft.y / minorPx) * minorPx;
+
+        for (let x = startX; x <= endX; x += minorPx) {
+          const isMajor = Math.abs(x % majorPx) < 0.001;
+          ctx.strokeStyle = isMajor ? '#bbb' : '#e5e5e5';
+          ctx.beginPath();
+          const sx = worldToScreen(x, 0).x;
+          ctx.moveTo(sx, 0);
+          ctx.lineTo(sx, canvas.height);
+          ctx.stroke();
+        }
+
+        for (let y = startY; y <= endY; y += minorPx) {
+          const isMajor = Math.abs(y % majorPx) < 0.001;
+          ctx.strokeStyle = isMajor ? '#bbb' : '#e5e5e5';
+          ctx.beginPath();
+          const sy = worldToScreen(0, y).y;
+          ctx.moveTo(0, sy);
+          ctx.lineTo(canvas.width, sy);
+          ctx.stroke();
+        }
       }
-      if (Date.now() - start > timeoutMs) { statusVal.textContent='timeout'; return; }
-      await sleep(interval);
-    }
-  }
 
-  function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+      // ================= DRAW =================
+      function redraw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawGrid();
 
-  // Draw waypoints + robot
-  function redraw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Path
+        ctx.strokeStyle = '#1e88e5';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        waypoints.forEach((wp, i) => {
+          const s = worldToScreen(wp.x, wp.y);
+          if (i === 0) ctx.moveTo(s.x, s.y);
+          else ctx.lineTo(s.x, s.y);
+        });
+        ctx.stroke();
 
-    // Waypoints & lines
-    if (waypoints.length > 0){
-      ctx.lineWidth=2; ctx.strokeStyle='#1e88e5';
-      ctx.beginPath();
-      ctx.moveTo(waypoints[0].x, waypoints[0].y);
-      for(let i=1;i<waypoints.length;i++){ ctx.lineTo(waypoints[i].x, waypoints[i].y); }
-      ctx.stroke();
+        // Per-segment distance labels: compute and draw
+        ctx.font = '12px sans-serif';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        for (let i = 0; i + 1 < waypoints.length; i++) {
+          const a = waypoints[i];
+          const b = waypoints[i + 1];
+          const sa = worldToScreen(a.x, a.y);
+          const sb = worldToScreen(b.x, b.y);
+          const midX = (sa.x + sb.x) / 2;
+          const midY = (sa.y + sb.y) / 2;
 
-      for(let i=0;i<waypoints.length;i++){
-        const wp=waypoints[i];
-        ctx.fillStyle = (i===0)?'#2e7d32':'#1976d2';
-        ctx.beginPath(); ctx.arc(wp.x, wp.y, 5,0,Math.PI*2); ctx.fill();
-        ctx.fillStyle='#fff'; ctx.font='10px sans-serif';
-        ctx.fillText(String(i), wp.x+6, wp.y-6);
+          const dx = (b.x - a.x);
+          const dy = (b.y - a.y);
+          const distCm = Math.hypot(dx, dy) * SCALE_CM_PER_PX;
+
+          const label = formatDistanceLabel(distCm);
+
+          // draw background box for readability
+          const paddingX = 6;
+          const paddingY = 3;
+          ctx.font = '12px sans-serif';
+          const metrics = ctx.measureText(label);
+          const boxW = metrics.width + paddingX * 2;
+          const boxH = 14 + paddingY * 2;
+
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+          // small rounded rect
+          const bx = midX - boxW / 2;
+          const by = midY - boxH / 2;
+          roundRect(ctx, bx, by, boxW, boxH, 4, true, false);
+          ctx.strokeRect(bx, by, boxW, boxH);
+
+          // draw text
+          ctx.fillStyle = '#222';
+          ctx.fillText(label, midX, midY);
+        }
+
+        // Waypoints
+        waypoints.forEach((wp, i) => {
+          const s = worldToScreen(wp.x, wp.y);
+          ctx.fillStyle = i === 0 ? '#2e7d32' : '#1976d2';
+          ctx.beginPath();
+          ctx.arc(s.x, s.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.font = '10px sans-serif';
+          ctx.fillText(i.toString(), s.x + 6, s.y - 6);
+        });
+
+        // Obstacles (draw persistent obstacles from backend) with width
+        obstacles.forEach((o) => {
+          // o.x_px, o.y_px are in backend pixel-space matching our world coords
+          const s = worldToScreen(o.x_px, o.y_px);
+          // Draw obstacle as rotated rectangle (we'll draw simple axis-aligned rectangle using width)
+          const widthPx = (o.width_cm || 40) / SCALE_CM_PER_PX;
+          const heightPx = 14; // visually thin
+
+          ctx.fillStyle = 'rgba(255,165,0,0.9)';
+          ctx.fillRect(s.x - widthPx / 2, s.y - heightPx / 2, widthPx, heightPx);
+          ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+          ctx.strokeRect(s.x - widthPx / 2, s.y - heightPx / 2, widthPx, heightPx);
+
+          // optional: draw distance label if available
+          if (typeof o.distance_cm === 'number') {
+            ctx.fillStyle = '#000';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`${o.distance_cm} cm`, s.x + widthPx / 2 + 4, s.y + 4);
+          }
+        });
+
+        // Robot
+        const r = worldToScreen(robotWorld.x, robotWorld.y);
+        ctx.fillStyle = 'red';
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        const rad = -robotWorld.angle * Math.PI / 180;
+        ctx.strokeStyle = 'red';
+        ctx.beginPath();
+        ctx.moveTo(r.x, r.y);
+        ctx.lineTo(r.x + 18 * Math.cos(rad), r.y + 18 * Math.sin(rad));
+        ctx.stroke();
       }
-    }
 
-    // Robot
-    ctx.fillStyle='red'; ctx.beginPath(); ctx.arc(robotPos.x, robotPos.y,6,0,Math.PI*2); ctx.fill();
-    const rad=robotPos.angle*Math.PI/180;
-    ctx.strokeStyle='red'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(robotPos.x,robotPos.y);
-    ctx.lineTo(robotPos.x + 18*Math.cos(rad), robotPos.y + 18*Math.sin(rad));
-    ctx.stroke();
-  }
+      // helper: rounded rectangle
+      function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+        if (typeof r === 'undefined') r = 5;
+        if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+        ctx.beginPath();
+        ctx.moveTo(x + r.tl, y);
+        ctx.lineTo(x + w - r.tr, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+        ctx.lineTo(x + w, y + h - r.br);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+        ctx.lineTo(x + r.bl, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+        ctx.lineTo(x, y + r.tl);
+        ctx.quadraticCurveTo(x, y, x + r.tl, y);
+        ctx.closePath();
+        if (fill) ctx.fill();
+        if (stroke) ctx.stroke();
+      }
 
-  function updateDistanceInfo(){
-    if (waypoints.length < 2){ distanceInfo.textContent=''; return; }
-    const a = waypoints[waypoints.length-2];
-    const b = waypoints[waypoints.length-1];
-    const distCm = Math.hypot(b.x-a.x, b.y-a.y) * SCALE_CM_PER_PX;
-    distanceInfo.textContent = `Last segment: ${distCm.toFixed(1)} cm`;
-  }
+      // ================= UI HELPERS =================
+      function updateDistanceInfo() {
+        if (waypoints.length < 2) {
+          distanceInfo.textContent = '';
+          return;
+        }
+        const a = waypoints[waypoints.length - 2];
+        const b = waypoints[waypoints.length - 1];
+        const distCm = Math.hypot(b.x - a.x, b.y - a.y) * SCALE_CM_PER_PX;
+        distanceInfo.textContent = `Last segment: ${distCm.toFixed(1)} cm`;
+      }
 
-  function updateWpCount(){ wpCount.textContent = waypoints.length; }
+      function updateWpCount() {
+        wpCount.textContent = waypoints.length;
+      }
 
-  redraw();
-})();
-</script>
+      clearBtn.addEventListener('click', async () => {
+        await resetBackend();
+
+        waypoints = [{ x: robotWorld.x, y: robotWorld.y }];
+        lastSentCount = 1;
+        initialRouteSent = false;
+        obstacles = [];
+
+        updateWpCount();
+        redraw();
+        updateDistanceInfo();
+      });
+
+      sendRouteBtn.addEventListener('click', async () => {
+        if (waypoints.length < 2) return alert('Need at least 2 waypoints');
+
+        try {
+          if (!initialRouteSent) {
+            await fetch('/execute_strict', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ waypoints, scale_cm_per_px: SCALE_CM_PER_PX })
+            });
+            initialRouteSent = true;
+            lastSentCount = waypoints.length;
+          } else {
+            const tail = waypoints.slice(lastSentCount);
+            if (!tail.length) return alert('No new waypoints');
+            await fetch('/execute_tail', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ waypoints: tail, scale_cm_per_px: SCALE_CM_PER_PX })
+            });
+            lastSentCount = waypoints.length;
+          }
+          await pollStatus();
+        } catch (e) {
+          alert('Execution failed');
+        }
+      });
+
+      async function pollStatus() {
+        while (true) {
+          const res = await fetch('/status');
+          const data = await res.json();
+
+          // update robot virtual pose
+          robotWorld.x = data.x_cm / SCALE_CM_PER_PX;
+          robotWorld.y = data.y_cm / SCALE_CM_PER_PX;
+          robotWorld.angle = data.heading_deg;
+          statusVal.textContent = data.status_text;
+
+          // update obstacles from backend
+          if (Array.isArray(data.obstacles)) {
+            obstacles = data.obstacles.slice(); // shallow copy
+          }
+
+          // If server reported a last_stop, and we have not handled this exact stop yet,
+          // truncate the frontend waypoints so the stop becomes the last waypoint.
+          if (data.last_stop && data.last_stop.x_px !== undefined && data.last_stop.y_px !== undefined) {
+            const sig = JSON.stringify({
+              reason: data.last_stop.reason,
+              x_px: data.last_stop.x_px,
+              y_px: data.last_stop.y_px,
+              from: data.last_stop.stop_segment_from_idx,
+              to: data.last_stop.stop_segment_to_idx
+            });
+
+            if (sig !== lastStopHandledSignature) {
+              lastStopHandledSignature = sig;
+
+              // Prefer to truncate preserving waypoints up to the segment start,
+              // then append the exact stop point (so we keep context but remove planned remainder).
+              if (typeof data.last_stop.stop_segment_from_idx === 'number') {
+                const fromIdx = data.last_stop.stop_segment_from_idx;
+                // keep waypoints up to and including fromIdx (but guard bounds)
+                const keepCount = Math.min(waypoints.length, fromIdx + 1);
+                waypoints = waypoints.slice(0, keepCount);
+
+                // replace or append the last point with the exact stop position
+                const stopPx = { x: data.last_stop.x_px, y: data.last_stop.y_px };
+                if (waypoints.length === 0) {
+                  waypoints.push(stopPx);
+                } else {
+                  waypoints[waypoints.length - 1] = stopPx;
+                }
+              } else {
+                // fallback: just set single waypoint at stop
+                waypoints = [{ x: data.last_stop.x_px, y: data.last_stop.y_px }];
+              }
+
+              // ensure lastSentCount doesn't point past the new list length
+              if (lastSentCount > waypoints.length) lastSentCount = waypoints.length;
+
+              updateWpCount();
+              redraw();
+              updateDistanceInfo();
+            }
+          }
+
+          redraw();
+
+          if (!data.executing) break;
+          await new Promise(r => setTimeout(r, 400));
+        }
+      }
+      await resetBackend();
+      redraw();
+    })();
+  </script>
 </body>
+
 </html>
