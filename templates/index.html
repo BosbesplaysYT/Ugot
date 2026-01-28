@@ -1,4 +1,3 @@
-<!-- Replace your existing HTML/JS with this file or merge the <script> portion below -->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -169,11 +168,9 @@
       function formatDistanceLabel(cm) {
         if (cm > 100) {
           const m = cm / 100;
-          // show 1 decimal for meters if <10m, otherwise no decimals for cleanliness
           const text = (m < 10) ? `${m.toFixed(1)} m` : `${m.toFixed(0)} m`;
           return text;
         } else {
-          // show 1 decimal for cm
           return `${cm.toFixed(1)} cm`;
         }
       }
@@ -361,25 +358,37 @@
           ctx.fillText(i.toString(), s.x + 6, s.y - 6);
         });
 
-        // Obstacles (draw persistent obstacles from backend) with width
+        // Obstacles: square at obstacle center; detour waypoint (if any) drawn as blue dot
         obstacles.forEach((o) => {
-          // o.x_px, o.y_px are in backend pixel-space matching our world coords
-          const s = worldToScreen(o.x_px, o.y_px);
-          // Draw obstacle as rotated rectangle (we'll draw simple axis-aligned rectangle using width)
+          // obstacle center
+          const ox = (o.x_px !== undefined) ? o.x_px : (o.x_cm / SCALE_CM_PER_PX);
+          const oy = (o.y_px !== undefined) ? o.y_px : (o.y_cm / SCALE_CM_PER_PX);
+          const s = worldToScreen(ox, oy);
+
           const widthPx = (o.width_cm || 40) / SCALE_CM_PER_PX;
-          const heightPx = 14; // visually thin
+          const sizePx = Math.max(10, Math.min(80, widthPx)); // clamp smaller for readability
 
-          ctx.fillStyle = 'rgba(255,165,0,0.9)';
-          ctx.fillRect(s.x - widthPx / 2, s.y - heightPx / 2, widthPx, heightPx);
-          ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-          ctx.strokeRect(s.x - widthPx / 2, s.y - heightPx / 2, widthPx, heightPx);
+          ctx.fillStyle = 'rgba(255,165,0,0.95)';
+          ctx.fillRect(s.x - sizePx / 2, s.y - sizePx / 2, sizePx, sizePx);
+          ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+          ctx.strokeRect(s.x - sizePx / 2, s.y - sizePx / 2, sizePx, sizePx);
 
-          // optional: draw distance label if available
+          // draw the detour waypoint (blue) if backend provided it
+          if (o.detour_wp_x_px !== undefined && o.detour_wp_y_px !== undefined) {
+            const ds = worldToScreen(o.detour_wp_x_px, o.detour_wp_y_px);
+            ctx.beginPath();
+            ctx.fillStyle = '#1976d2';
+            ctx.arc(ds.x, ds.y, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+          }
+
           if (typeof o.distance_cm === 'number') {
             ctx.fillStyle = '#000';
             ctx.font = '10px sans-serif';
             ctx.textAlign = 'left';
-            ctx.fillText(`${o.distance_cm} cm`, s.x + widthPx / 2 + 4, s.y + 4);
+            ctx.fillText(`${o.distance_cm} cm`, s.x + sizePx / 2 + 4, s.y + 4);
           }
         });
 
