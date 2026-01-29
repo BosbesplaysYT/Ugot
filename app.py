@@ -1,11 +1,3 @@
-# app.py
-# Refactored, safer version of the route execution service.
-# - Encapsulated robot interactions in RobotController
-# - Robust camera stream that won't crash if robot isn't ready
-# - Thread + stop-event management for execution
-# - Better logging and error handling
-# - Minor behavioral fixes and defensive checks
-
 from flask import Flask, request, jsonify, render_template, Response
 import math
 import threading
@@ -15,11 +7,10 @@ from typing import List, Dict, Optional, Tuple
 import numpy as np
 import cv2
 
-# Put the real ugot import behind a try so the module can still run for testing.
 try:
     from ugot import ugot
 except Exception:
-    ugot = None  # unit tests / dev machines may not have the robot package
+    ugot = None
 
 # ---------------------- Configuration ----------------------
 DEVICE_IP = "10.60.134.226"
@@ -32,7 +23,7 @@ STOP_DISTANCE_CM = 40
 AVOID_CLEARANCE_EXTRA_CM = 30
 MIN_LATERAL_OFFSET_CM = 40
 MAX_AVOID_ATTEMPTS = 2
-SPLIT_LATERAL_OFFSET_CM = 50
+SPLIT_LATERAL_OFFSET_CM = 30
 SPLIT_FORWARD_OFFSET_CM = 8
 MAX_IMMEDIATE_TURN_DEG = 55
 # -----------------------------------------------------------
@@ -42,11 +33,11 @@ logger = logging.getLogger("route_exec")
 
 app = Flask(__name__)
 
-# ---------------- Robot controller (safe wrapper) ----------------
+# ---------------- Robot controller ----------------
 class RobotController:
     """
-    Encapsulates robot calls and provides safe fallbacks.
-    If ugot is None or initialization fails, methods degrade gracefully.
+    Veilige interface voor de applicatieo om commandos en sensoroperaties op uit te voeren
+    Initialiseert robot als dat nog niet gedaan is
     """
     def __init__(self):
         self._robot = None
@@ -81,7 +72,7 @@ class RobotController:
                 self._camera_open = False
             # mark as initialized even if some optional calls failed
             self._initialized = True
-            logger.info("Robot initialized (best-effort).")
+            logger.info("Robot initialized.")
             return True
         except Exception as e:
             logger.exception("Robot initialization failed: %s", e)
@@ -90,7 +81,7 @@ class RobotController:
             return False
 
     def safe_turn(self, direction: int, speed: float, degrees: float):
-        """Best-effort turn. direction: 2=left,3=right"""
+        """bochtjes. direction: 2=links,3=rechts"""
         if not self.ensure_robot():
             return
         try:
@@ -446,8 +437,8 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                         remaining.append(o)
                         continue
                     if math.hypot(ox - detour_x, oy - detour_y) <= tol_cm:
-                        # mark as resolved for debugging, but drop from active list
-                        logger.info("Resolving obstacle created for detour at (%.1f,%.1f)", detour_x, detour_y)
+                        o["resolved"] = True  # keep it in robot_state["obstacles"] for UI
+                        logger.info("Marking obstacle as resolved for detour at (%.1f,%.1f)", detour_x, detour_y)
                         continue
                     remaining.append(o)
                 robot_state["obstacles"] = remaining
