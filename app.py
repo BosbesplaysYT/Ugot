@@ -26,6 +26,7 @@ MAX_AVOID_ATTEMPTS = 2
 SPLIT_LATERAL_OFFSET_CM = 30
 SPLIT_FORWARD_OFFSET_CM = 8
 MAX_IMMEDIATE_TURN_DEG = 55
+TURN_CORRECTION_FACTOR = 1.1  # < 1.0 = turns less, > 1.0 = turns more
 # -----------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
@@ -62,7 +63,7 @@ class RobotController:
             except Exception:
                 pass
             try:
-                self._robot.transform_set_chassis_height(2)
+                self._robot.transform_set_chassis_height(7)
             except Exception:
                 pass
             try:
@@ -171,7 +172,7 @@ class RobotController:
             except Exception:
                 pass
             try:
-                self._robot.transform_set_chassis_height(2)
+                self._robot.transform_set_chassis_height(7)
             except Exception:
                 pass
             try:
@@ -303,7 +304,7 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
     try:
         robot_ctrl.ensure_robot()
         robot_ctrl.play_tts("Ik ga de route uitvoeren!", wait=False)
-        robot_ctrl.set_chassis_height(4)
+        robot_ctrl.set_chassis_height(7)
 
         if not waypoints_px or len(waypoints_px) < 2:
             with robot_state_lock:
@@ -505,9 +506,10 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                             # draai in maximaal 3 stappen om grote single-turn overshoots te vermijden
                             steps = 0
                             while abs(delta_h) > 1.0 and steps < 3:
-                                turn_mag = min(abs(delta_h), MAX_IMMEDIATE_TURN_DEG)
+                                turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG) * TURN_CORRECTION_FACTOR
                                 turn_dir = 2 if delta_h > 0 else 3
                                 robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
+                                time.sleep(0.08)  # let inertia settle
                                 with robot_state_lock:
                                     # update interne heading met uitgevoerde stap
                                     robot_state["heading_deg"] = normalize_deg(robot_state["heading_deg"] + math.copysign(turn_mag, delta_h))
@@ -526,10 +528,10 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                 # maximaal een paar stappen achter elkaar om vóór beweging te alignen
                 steps = 0
                 while abs(delta) > 1.0 and steps < 3:
-                    turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG)
+                    turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG) * TURN_CORRECTION_FACTOR
                     turn_dir = 2 if delta > 0 else 3
                     robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
-
+                    time.sleep(0.08)  # let inertia settle
                     # update interne heading
                     with robot_state_lock:
                         robot_state["heading_deg"] = normalize_deg(robot_state["heading_deg"] + math.copysign(turn_mag, delta))
@@ -564,9 +566,10 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                     new_heading = math.degrees(math.atan2(new_ty - ry, new_tx - rx))
                     delta2 = normalize_deg(new_heading - current_heading)
                     if abs(delta2) > 1.0:
-                        turn_mag = min(abs(delta2), MAX_IMMEDIATE_TURN_DEG)
+                        turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG) * TURN_CORRECTION_FACTOR
                         turn_dir = 2 if delta2 > 0 else 3
                         robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
+                        time.sleep(0.08)  # let inertia settle
                         turn_amount = math.copysign(turn_mag, delta2)
                         with robot_state_lock:
                             robot_state["heading_deg"] = normalize_deg(current_heading + turn_amount)
@@ -626,7 +629,7 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
             robot_state["status_text"] = "route complete"
 
         robot_ctrl.play_tts("Ik heb de route uitgevoerd.", wait=False)
-        robot_ctrl.set_chassis_height(2)
+        robot_ctrl.set_chassis_height(7)
 
     except Exception as e:
         logger.exception("Execution error: %s", e)
