@@ -437,8 +437,10 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                         remaining.append(o)
                         continue
                     if math.hypot(ox - detour_x, oy - detour_y) <= tol_cm:
-                        o["resolved"] = True  # keep it in robot_state["obstacles"] for UI
+                        # mark as resolved but keep in the list so UI can show it as resolved
+                        o["resolved"] = True
                         logger.info("Marking obstacle as resolved for detour at (%.1f,%.1f)", detour_x, detour_y)
+                        remaining.append(o)
                         continue
                     remaining.append(o)
                 robot_state["obstacles"] = remaining
@@ -486,27 +488,56 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
             dist_to_target = math.hypot(dx, dy)
 
             # reached waypoint?
-            if dist_to_target < 0.5:
+            # gebruik ruimere tolerantie (praktijk: 5 cm) om oscillaties / tiny misses te voorkomen
+            if dist_to_target < 5.0:
                 # if we just arrived at a detour or clearance waypoint, resolve obstacles
                 if points_cm[idx].get("_detour") or points_cm[idx].get("_clearance"):
                     _resolve_obstacles_for_detour(points_cm[idx]["x"], points_cm[idx]["y"], scale_cm_per_px)
+
+                    # als de waypoint een gewenste heading bevat, forceer die heading
+                    desired_heading = points_cm[idx].get("desired_heading")
+                    if desired_heading is not None:
+                        # draai naar desired_heading (bereken kleinste delta)
+                        with robot_state_lock:
+                            cur_h = robot_state["heading_deg"]
+                        delta_h = normalize_deg(desired_heading - cur_h)
+                        if abs(delta_h) > 1.0:
+                            # draai in maximaal 3 stappen om grote single-turn overshoots te vermijden
+                            steps = 0
+                            while abs(delta_h) > 1.0 and steps < 3:
+                                turn_mag = min(abs(delta_h), MAX_IMMEDIATE_TURN_DEG)
+                                turn_dir = 2 if delta_h > 0 else 3
+                                robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
+                                with robot_state_lock:
+                                    # update interne heading met uitgevoerde stap
+                                    robot_state["heading_deg"] = normalize_deg(robot_state["heading_deg"] + math.copysign(turn_mag, delta_h))
+                                    cur_h = robot_state["heading_deg"]
+                                delta_h = normalize_deg(desired_heading - cur_h)
+                                steps += 1
                 idx += 1
                 continue
 
 
-            # heading control
+            # heading control (maak meerdere kleine stappen indien nodig zodat we niet met groot restdelta vooruit gaan)
             target_heading = math.degrees(math.atan2(dy, dx))
             delta = normalize_deg(target_heading - current_heading)
 
             if abs(delta) > 1.0:
-                turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG)
-                turn_dir = 2 if delta > 0 else 3
-                robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
+                # maximaal een paar stappen achter elkaar om vóór beweging te alignen
+                steps = 0
+                while abs(delta) > 1.0 and steps < 3:
+                    turn_mag = min(abs(delta), MAX_IMMEDIATE_TURN_DEG)
+                    turn_dir = 2 if delta > 0 else 3
+                    robot_ctrl.safe_turn(turn_dir, TURN_SPEED_DEG_S, float(turn_mag))
 
-                turn_amount = math.copysign(turn_mag, delta)
-                with robot_state_lock:
-                    robot_state["heading_deg"] = normalize_deg(current_heading + turn_amount)
-                    current_heading = robot_state["heading_deg"]
+                    # update interne heading
+                    with robot_state_lock:
+                        robot_state["heading_deg"] = normalize_deg(robot_state["heading_deg"] + math.copysign(turn_mag, delta))
+                        current_heading = robot_state["heading_deg"]
+
+                    # recalc delta
+                    delta = normalize_deg(target_heading - current_heading)
+                    steps += 1
 
             # read distance sensor
             dist_read = robot_ctrl.read_distance()
@@ -550,11 +581,15 @@ def execute_route_thread(waypoints_px: List[Dict], scale_cm_per_px: float, stop_
                     clearance_x = new_tx + math.cos(rad_det) * (STOP_DISTANCE_CM + 10.0)
                     clearance_y = new_ty + math.sin(rad_det) * (STOP_DISTANCE_CM + 10.0)
                     # insert clearance after the detour (detour is at index idx)
-                    points_cm.insert(idx + 1, {"x": clearance_x, "y": clearance_y, "_clearance": True})
+                    points_cm.insert(idx + 1, {
+                        "x": clearance_x,
+                        "y": clearance_y,
+                        "_clearance": True,
+                        "desired_heading": new_heading
+                    })
 
                     # re-evaluate (HARD restart of loop)
                     continue
-
 
                 # hard block: couldn't insert detour
                 with robot_state_lock:
